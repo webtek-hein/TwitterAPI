@@ -9,7 +9,7 @@ http.client.HTTPConnection.debuglevel = 0
 
 logging.basicConfig(filename="log.txt")
 logging.getLogger().setLevel(logging.DEBUG)
-requests_log = logging.getLogger("requests.packages.urllib3")
+requests_log = logging.getLogger("urllib3")
 requests_log.setLevel(logging.DEBUG)
 requests_log.propagate = True
 
@@ -21,9 +21,6 @@ HEADER = {
     "token_secret": config.TOKEN_SECRET,
 }
 
-params = {
-    "tweet.fields": "created_at,in_reply_to_user_id,author_id,conversation_id"
-}
 
 def get_userid_by_username(username):
     endpoint = f"https://api.twitter.com/2/users/by/username/{username}"
@@ -38,9 +35,12 @@ def twitter_user_lookup(userid, users):
 
 def get_tweets(uid, count=5, next_token=False, start_time=None):
     endpoint = f"https://api.twitter.com/2/users/{uid}/tweets"
- 
-    params["max_results"] = count
 
+    params = {
+        "max_results": count,
+        "tweet.fields": "created_at,in_reply_to_user_id,author_id,conversation_id"
+    }
+ 
     if next_token and type(next_token) == str:
         params["pagination_token"] = next_token
 
@@ -49,10 +49,14 @@ def get_tweets(uid, count=5, next_token=False, start_time=None):
 
     return requests.get(endpoint, headers=HEADER, params=params).json()
 
-def get_conversation(conversation_id, next_token=False):
-
-    params["query"] = f"conversation_id:{conversation_id}"
+def get_conversation(conversation_id, next_token=False, count=5):
     
+    params = {
+        "max_results": count,
+        "tweet.fields": "created_at,in_reply_to_user_id,author_id,conversation_id",
+        "query": f"conversation_id:{conversation_id}"
+    }
+
     if next_token and type(next_token) == str:
         params["pagination_token"] = next_token
 
@@ -83,10 +87,13 @@ def get_all_conversation(conversation_ids):
         next_token = True
 
         while next_token:
-            response = get_conversation(conversation_id, next_token)
+            response = get_conversation(conversation_id, next_token, 100)
+
             if response['meta']['result_count'] > 0:
+                print(conversation_id, response)
                 result["data"].extend(response['data'])
-                next_token = response.get("next_token", False)
+            
+            next_token = response.get("next_token", False)
     
     return result
 

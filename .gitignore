@@ -8,6 +8,7 @@ config.py
 *.so
 *.xlsx
 config.py
+log.txt
 
 # Distribution / packaging
 .Python
