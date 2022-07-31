@@ -6,6 +6,7 @@ import pandas as pd
 import requests
 import logging
 import http.client
+from itertools import groupby
 from requests.adapters import HTTPAdapter
 import os
 
@@ -25,8 +26,18 @@ HEADER = {
     "token_secret": config.TOKEN_SECRET,
 }
 
+retry_strategy = Retry(
+    total=3,
+    backoff_factor=60,
+    status_forcelist=[429, 500, 502, 503, 504],
+    allowed_methods=["GET"]
+)
+
+adapter = HTTPAdapter(max_retries=retry_strategy)
 s = requests.Session()
 s.headers.update(HEADER)
+s.mount("https://", adapter)
+s.mount("http://", adapter)
 
 def get_userid_by_username(username):
     endpoint = f"https://api.twitter.com/2/users/by/username/{username}"
@@ -92,6 +103,8 @@ def get_all_tweets(uid, start_time=None):
         
         next_token = response["meta"].get("next_token", False)
 
+    result["users"] = [result["users"][i] for i in range(len(result["users"] )) if result["users"][i] not in result["users"][i + 1:]]
+
     return result
 
 def get_all_conversation(conversation_ids):
@@ -108,10 +121,14 @@ def get_all_conversation(conversation_ids):
 
             if response['meta']['result_count'] > 0:
                 result["data"].extend(response['data'])
-                result["users"].extend(response["includes"]["users"])
+
+
+                result["users"].extend(response['includes']['users'])
 
             
-            next_token = response.get("next_token", False)
+            next_token = response['meta'].get("next_token", False)
+
+    result["users"] = [result["users"][i] for i in range(len(result["users"] )) if result["users"][i] not in result["users"][i + 1:]]
     
     return result
 
@@ -119,6 +136,7 @@ def main():
     #DATE FORMAT: YYYY-MM-DDTHH:mm:ssZ
     start_time = "2021-09-01T00:00:00Z"
     export_filename = "user_twitter_data.xlsx"
+    replies = None
 
     # Get UserID by username
     # uid = get_userid_by_username("mzfitzzz")["id"]
@@ -133,9 +151,12 @@ def main():
     user_retweets = tweets[tweets["text"].str.startswith("RT")]
     
     # 3) Get User tweet replies
-    conversations = map_users(**get_all_conversation(user_tweets['conversation_id'].to_list()))
+    conversation = map_users(**get_all_conversation(user_tweets['conversation_id'].to_list()))
 
-    print(conversations)
+    # 4) Filter replies to user 
+    replies = conversation[conversation["reply_to"] == "scndryan"]
+
+    print(replies)
 
     if not os.path.exists(export_filename):
         wb = Workbook()
@@ -147,9 +168,11 @@ def main():
     with pd.ExcelWriter(export_filename, mode="a", engine="openpyxl", if_sheet_exists="replace") as writer:
         user_tweets.to_excel(writer, sheet_name="Tweets", index=False)
         user_retweets.to_excel(writer, sheet_name="Retweets", index=False)
-        conversations.to_excel(writer, sheet_name="Replies", index=False)
+        replies.to_excel(writer, sheet_name="Replies", index=False)
+
 
 if __name__ == "__main__":
     print("Twitter scrape!")
     main()
+    s.close()
 
