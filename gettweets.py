@@ -1,9 +1,13 @@
+from openpyxl import Workbook
 import requests
+from urllib3 import Retry
 import config
 import pandas as pd
 import requests
 import logging
 import http.client
+from requests.adapters import HTTPAdapter
+import os
 
 http.client.HTTPConnection.debuglevel = 0
 
@@ -21,24 +25,30 @@ HEADER = {
     "token_secret": config.TOKEN_SECRET,
 }
 
+s = requests.Session()
+s.headers.update(HEADER)
 
 def get_userid_by_username(username):
     endpoint = f"https://api.twitter.com/2/users/by/username/{username}"
 
-    return requests.get(endpoint, headers=HEADER).json()["data"]
+    return s.get(endpoint).json()["data"]
 
-def twitter_user_lookup(userid, users):
-    if userid:
-        return next(user["name"] for user in users if user["id"] == userid)
-    
-    return ""
+def map_users(data, users):
+    raw_tweets = pd.DataFrame(data)
+    users = pd.DataFrame(users)
+    tweets = raw_tweets.join(users.set_index('id'), on="author_id").rename(columns={"username":"author"}) \
+                           [["id", "created_at", "author", "text", "conversation_id", "in_reply_to_user_id"]]
+
+    return tweets.join(users.set_index('id'), on="in_reply_to_user_id").rename(columns={"username":"reply_to"}) \
+                                   [["id", "conversation_id", "created_at", "author", "text", "reply_to"]]
 
 def get_tweets(uid, count=5, next_token=False, start_time=None):
     endpoint = f"https://api.twitter.com/2/users/{uid}/tweets"
 
     params = {
         "max_results": count,
-        "tweet.fields": "created_at,in_reply_to_user_id,author_id,conversation_id"
+        "tweet.fields": "created_at,in_reply_to_user_id,author_id,conversation_id",
+        "expansions": "in_reply_to_user_id,author_id"
     }
  
     if next_token and type(next_token) == str:
@@ -47,14 +57,15 @@ def get_tweets(uid, count=5, next_token=False, start_time=None):
     if start_time:
         params["start_time"] = start_time
 
-    return requests.get(endpoint, headers=HEADER, params=params).json()
+    return s.get(endpoint,params=params).json()
 
 def get_conversation(conversation_id, next_token=False, count=5):
     
     params = {
         "max_results": count,
         "tweet.fields": "created_at,in_reply_to_user_id,author_id,conversation_id",
-        "query": f"conversation_id:{conversation_id}"
+        "query": f"conversation_id:{conversation_id}",
+        "expansions": "in_reply_to_user_id,author_id"
     }
 
     if next_token and type(next_token) == str:
@@ -62,36 +73,43 @@ def get_conversation(conversation_id, next_token=False, count=5):
 
     endpoint = "https://api.twitter.com/2/tweets/search/recent"
 
-    return requests.get(endpoint, headers=HEADER, params=params).json()
+    return s.get(endpoint,params=params).json()
 
 def get_all_tweets(uid, start_time=None):
     next_token = True
 
     result = {
-        "data": []
+        "data": [],
+        "users": []
     }
     
     while next_token:
         response = get_tweets(uid, 100, next_token, start_time)
-        result["data"].extend(response["data"])
+
+        if response['meta']['result_count'] > 0:
+            result["data"].extend(response["data"])
+            result["users"].extend(response["includes"]["users"])
+        
         next_token = response["meta"].get("next_token", False)
 
     return result
 
 def get_all_conversation(conversation_ids):
     result = {
-        "data": []
+        "data": [],
+        "users": []
     }
 
-    for conversation_id in conversation_ids:
+    for conversation_id in set(conversation_ids):
         next_token = True
 
         while next_token:
             response = get_conversation(conversation_id, next_token, 100)
 
             if response['meta']['result_count'] > 0:
-                print(conversation_id, response)
                 result["data"].extend(response['data'])
+                result["users"].extend(response["includes"]["users"])
+
             
             next_token = response.get("next_token", False)
     
@@ -103,10 +121,10 @@ def main():
     export_filename = "user_twitter_data.xlsx"
 
     # Get UserID by username
-    uid = get_userid_by_username("mzfitzzz")["id"]
-    # uid = get_userid_by_username("scndryan")["id"]
+    # uid = get_userid_by_username("mzfitzzz")["id"]
+    uid = get_userid_by_username("scndryan")["id"]
 
-    tweets = pd.DataFrame(get_all_tweets(uid, start_time)["data"])
+    tweets = map_users(**get_all_tweets(uid, start_time))
 
     # 1) Get all User Tweets
     user_tweets = tweets[~tweets["text"].str.startswith("RT")]
@@ -114,15 +132,22 @@ def main():
     # 2) Get all user retweets
     user_retweets = tweets[tweets["text"].str.startswith("RT")]
     
-    print(len(user_tweets['conversation_id'].to_list()))
-
     # 3) Get User tweet replies
-    conversations = pd.DataFrame(get_all_conversation(set(user_tweets['conversation_id'].to_list()))["data"])
+    conversations = map_users(**get_all_conversation(user_tweets['conversation_id'].to_list()))
+
+    print(conversations)
+
+    if not os.path.exists(export_filename):
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Tweets"
+        wb.save(export_filename)
+
     
     with pd.ExcelWriter(export_filename, mode="a", engine="openpyxl", if_sheet_exists="replace") as writer:
-        user_tweets.to_excel(writer, sheet_name="Tweets")
-        user_retweets.to_excel(writer, sheet_name="Retweets")
-        conversations.to_excel(writer, sheet_name="Replies")
+        user_tweets.to_excel(writer, sheet_name="Tweets", index=False)
+        user_retweets.to_excel(writer, sheet_name="Retweets", index=False)
+        conversations.to_excel(writer, sheet_name="Replies", index=False)
 
 if __name__ == "__main__":
     print("Twitter scrape!")
