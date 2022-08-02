@@ -23,6 +23,7 @@ def parse_result(tweets):
         })
     return result
 
+
 def main(username, start_time):
     export_filename = "user_tweets_data.xlsx"
     uid = client.get_user(username=username).data.id
@@ -59,14 +60,16 @@ def main(username, start_time):
         ws = wb.active
         ws.title = "Tweets"
         wb.save(export_filename)
-
+    
+    all_tweets_df = pd.DataFrame(all_tweets)
+    user_tweets = all_tweets_df[~all_tweets_df["text"].str.startswith("RT")]
+    user_retweets = all_tweets_df[all_tweets_df["text"].str.startswith("RT")]
     
     with pd.ExcelWriter(export_filename, mode="a", engine="openpyxl", if_sheet_exists="replace") as writer:
-        pd.DataFrame(all_tweets).to_excel(writer, sheet_name="Tweets", index=False)
+        user_tweets.to_excel(writer, sheet_name="Tweets", index=False)
+        user_retweets.to_excel(writer, sheet_name="Tweets", index=False)
         pd.DataFrame(parse_result(replies)).to_excel(writer, sheet_name="Replies", index=False)
 
 if __name__ == "__main__":
     print("Twitter scrape!")
     main("mzfitzzz", "2021-09-01T00:00:00Z")
-
-    streaming_client.sample()
