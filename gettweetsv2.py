@@ -1,11 +1,12 @@
 from unittest.util import safe_repr
 import tweepy
 import config
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 import pandas as pd
 import os
+import json 
 from datetime import datetime
-
+import dateutil.parser
 
 class Listener(tweepy.StreamingClient):
     tweets = {
@@ -13,23 +14,27 @@ class Listener(tweepy.StreamingClient):
         "includes": []
     }
 
-    def on_data(self, tweets):
+    def on_data(self, raw_data):
+        tweets = json.loads(raw_data)
         users = {u['id']: u["username"] for u in tweets["includes"]["users"]}
-        
-        print({
-            "created_at": tweets["data"]["created_at"].strftime("%d/%m/%Y %H:%M:%S"),
-            "author": users[tweets["data"]["author_id"]],
-            "conversation_id": f'{tweets["data"]["conversation_id"]}',
-            "text": tweets["data"]["text"],
-            "in_reply_to": users[tweets["data"]["in_reply_to_user_id"]]
-        })
+
+        wb_filename = "user_tweets_data.xlsx"
+        wb = load_workbook(wb_filename)
+        page = wb["Replies"]
+        page.append([
+            dateutil.parser.parse(tweets["data"]["created_at"]).strftime("%d/%m/%Y %H:%M:%S"),
+            users[tweets["data"]["author_id"]],
+            f'{tweets["data"]["conversation_id"]}',
+            tweets["data"]["text"],
+            users[tweets["data"].get("in_reply_to_user_id")]
+        ])
+        wb.save(filename=wb_filename)
         
 
 client = tweepy.Client(bearer_token=config.BEARER_TOKEN, wait_on_rate_limit=True)
 stream = Listener(bearer_token=config.BEARER_TOKEN, wait_on_rate_limit=True)
 
 def parse_result(tweets):
-    print(tweets)
     result = []
 
     users = {u['id']: u["username"] for u in tweets.includes['users']}
@@ -100,16 +105,14 @@ def main(username, start_time, export_filename):
     
         uid = client.get_user(username=username).data.id
 
-        all_tweets_df = pd.DataFrame(get_all_tweets(uid, start_time))
+        all_tweets_df = pd.DataFrame(get_all_tweets(uid, start_time))[::-1]
         user_tweets = all_tweets_df[~all_tweets_df["text"].str.startswith("RT")]
         user_retweets = all_tweets_df[all_tweets_df["text"].str.startswith("RT")]
 
         with pd.ExcelWriter(export_filename, mode="a", engine="openpyxl", if_sheet_exists="replace") as writer:
             user_tweets.to_excel(writer, sheet_name="Tweets", index=False)
             user_retweets.to_excel(writer, sheet_name="Retweets", index=False)
-            pd.DataFrame(get_all_replies(uid, start_time)).to_excel(writer, sheet_name="Replies", index=False)
-
-    # print(stream.get_rules())
+            pd.DataFrame(get_all_replies(uid, start_time))[::-1].to_excel(writer, sheet_name="Replies", index=False)
 
     stream.add_rules(tweepy.StreamRule(f"from:{username} OR to:{username}"))
     stream.filter(
