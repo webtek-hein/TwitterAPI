@@ -67,7 +67,7 @@ def main(username, start_time):
     
     with pd.ExcelWriter(export_filename, mode="a", engine="openpyxl", if_sheet_exists="replace") as writer:
         user_tweets.to_excel(writer, sheet_name="Tweets", index=False)
-        user_retweets.to_excel(writer, sheet_name="Tweets", index=False)
+        user_retweets.to_excel(writer, sheet_name="Retweets", index=False)
         pd.DataFrame(parse_result(replies)).to_excel(writer, sheet_name="Replies", index=False)
 
 if __name__ == "__main__":
