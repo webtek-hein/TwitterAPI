@@ -8,11 +8,7 @@ import dateutil.parser
 from loguru import logger
 from win32com import client as winclient
 
-SHEET_MAPPING = {
-    "Tweets": 1,
-    "Retweets": 2,
-    "Replies": 3
-}
+SHEET_MAPPING = {"Tweets": 1, "Retweets": 2, "Replies": 3}
 
 
 def win32_excel_save(data: list, sheet_name):
@@ -47,7 +43,7 @@ class Listener(tweepy.StreamingClient):
                 sheet_name = "Retweets"
         data = [
             dateutil.parser.parse(tweets["data"]["created_at"]).strftime(
-                "%d/%m/%Y %H:%M:%S"
+                '=CONCATENATE(TEXT(DATE(%Y,%m,%d), "dd/mm/yyyy")," ",TEXT(TIME(%H,%M,%S), "h:mm:ss"))'
             ),
             users[tweets["data"]["author_id"]],
             f"'{tweets['data']['conversation_id']}",
