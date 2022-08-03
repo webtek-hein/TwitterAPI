@@ -14,13 +14,24 @@ class Listener(tweepy.StreamingClient):
         "includes": []
     }
 
+    def set_user_id(self, uid):
+        self.uid = uid
+
     def on_data(self, raw_data):
         tweets = json.loads(raw_data)
         users = {u['id']: u["username"] for u in tweets["includes"]["users"]}
+        
+        sheet_name = "Replies"
+
+        if self.uid == users[tweets["data"]["author_id"]]:
+            if tweets["data"]["referenced_tweets"]["type"] == "retweeted":
+                sheet_name = "Retweets"
+
+            sheet_name = "Tweets"
 
         wb_filename = "user_tweets_data.xlsx"
         wb = load_workbook(wb_filename)
-        page = wb["Replies"]
+        page = wb[sheet_name]
         page.append([
             dateutil.parser.parse(tweets["data"]["created_at"]).strftime("%d/%m/%Y %H:%M:%S"),
             users[tweets["data"]["author_id"]],
@@ -32,7 +43,6 @@ class Listener(tweepy.StreamingClient):
         
 
 client = tweepy.Client(bearer_token=config.BEARER_TOKEN, wait_on_rate_limit=True)
-stream = Listener(bearer_token=config.BEARER_TOKEN, wait_on_rate_limit=True)
 
 def parse_result(tweets):
     result = []
@@ -100,10 +110,14 @@ def create_tweet_file():
 
 def main(username, start_time, export_filename):
 
+    uid = client.get_user(username=username).data.id
+    stream = Listener(bearer_token=config.BEARER_TOKEN, wait_on_rate_limit=True)
+    stream.set_user_id(uid)
+
+
     if not os.path.exists(export_filename):
         create_tweet_file()
     
-        uid = client.get_user(username=username).data.id
 
         all_tweets_df = pd.DataFrame(get_all_tweets(uid, start_time))[::-1]
         user_tweets = all_tweets_df[~all_tweets_df["text"].str.startswith("RT")]
@@ -116,7 +130,7 @@ def main(username, start_time, export_filename):
 
     stream.add_rules(tweepy.StreamRule(f"from:{username} OR to:{username}"))
     stream.filter(
-        tweet_fields=["created_at", "conversation_id"],
+        tweet_fields=["created_at", "conversation_id", "referenced_tweets"],
         expansions=['author_id', 'in_reply_to_user_id']
     )
 
